@@ -139,7 +139,7 @@
             <button class="secondary" type="button" id="addSupplierBtn">Agregar</button>
           </div>
         </label>
-        <label>Compra pendiente
+        <label>Proveedor / deuda pendiente
           <select id="paymentPurchase"></select>
         </label>
         <label>Fecha de pago
@@ -205,10 +205,27 @@
           <div><span>Stock valorizado al costo</span><strong id="stockValue">$0</strong></div>
           <div><span>Costo promedio</span><strong id="avgCost">$0/saco</strong></div>
           <div><span>Precio de venta sugerido</span><strong id="suggestedPrice">$0/saco</strong></div>
-          <div><span>Ganancia estimada mes</span><strong id="monthlyProfit">$0</strong></div>
-          <div><span>Margen estimado mes</span><strong id="monthlyMargin">0%</strong></div>
+          <div><span>Ganancia real mes</span><strong id="monthlyProfit">$0</strong></div>
+          <div><span>Margen real mes</span><strong id="monthlyMargin">0%</strong></div>
           <div><span>Ventas registradas mes</span><strong id="monthlyTicketCount">0</strong></div>
           <div><span>Saldo a favor proveedor</span><strong id="supplierCredit">$0</strong></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Rendimiento mensual</h2>
+        </div>
+        <label>Mes
+          <select id="dashboardMonthSelect"></select>
+        </label>
+        <div class="report-grid month-report">
+          <div><span>Ventas del mes</span><strong id="selectedMonthSales">$0</strong></div>
+          <div><span>Ganancia real</span><strong id="selectedMonthProfit">$0</strong></div>
+          <div><span>Compras del mes</span><strong id="selectedMonthPurchases">$0</strong></div>
+          <div><span>Sacos comprados</span><strong id="selectedMonthBoughtSacks">0 sacos</strong></div>
+          <div><span>Sacos vendidos</span><strong id="selectedMonthSoldSacks">0 sacos</strong></div>
+          <div><span>Pagos a proveedor</span><strong id="selectedMonthPayments">$0</strong></div>
         </div>
       </section>
 

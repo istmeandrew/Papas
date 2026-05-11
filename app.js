@@ -148,6 +148,35 @@ function isAfter(date, start) {
   return new Date(date).getTime() >= start.getTime();
 }
 
+function isInPeriod(date, start, end) {
+  const time = new Date(date).getTime();
+  return time >= start.getTime() && time < end.getTime();
+}
+
+function nextMonth(date) {
+  const d = startOfMonth(date);
+  d.setMonth(d.getMonth() + 1);
+  return d;
+}
+
+function monthKey(date) {
+  const d = new Date(date);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+}
+
+function monthLabel(key) {
+  const [year, month] = key.split("-").map(Number);
+  return new Intl.DateTimeFormat("es-CL", { month: "long", year: "numeric" }).format(new Date(year, month - 1, 1));
+}
+
+function monthRange(key) {
+  const [year, month] = key.split("-").map(Number);
+  const start = new Date(year, month - 1, 1);
+  return { start, end: nextMonth(start) };
+}
+
 async function loadState() {
   const [varieties, suppliers, sales, purchases, payments, settingsRows] = await Promise.all([
     getAll("varieties"),
@@ -226,20 +255,90 @@ function varietyStats(varietyId) {
 }
 
 function purchaseBalance(purchase) {
-  const paid = state.payments
-    .filter((payment) => payment.purchaseId === purchase.id)
-    .reduce((sum, payment) => sum + payment.amount, 0);
-  return Math.max(purchase.total - paid, 0);
+  return purchaseBalancesById().get(purchase.id) ?? Math.max(purchase.total, 0);
+}
+
+function purchaseBalancesById() {
+  const paymentsBySupplier = new Map();
+  for (const payment of state.payments) {
+    const supplier = payment.supplier || DEFAULT_SUPPLIER;
+    paymentsBySupplier.set(supplier, (paymentsBySupplier.get(supplier) || 0) + (Number(payment.amount) || 0));
+  }
+
+  const balances = new Map();
+  const purchases = [...state.purchases].sort((a, b) => new Date(a.date) - new Date(b.date));
+  for (const purchase of purchases) {
+    const supplier = purchase.supplier || DEFAULT_SUPPLIER;
+    const availablePayment = paymentsBySupplier.get(supplier) || 0;
+    const paidToPurchase = Math.min(Number(purchase.total) || 0, availablePayment);
+    balances.set(purchase.id, Math.max((Number(purchase.total) || 0) - paidToPurchase, 0));
+    paymentsBySupplier.set(supplier, Math.max(availablePayment - paidToPurchase, 0));
+  }
+  return balances;
+}
+
+function supplierSummaries() {
+  const rows = new Map();
+  for (const supplier of state.suppliers) {
+    rows.set(supplier.name, { supplier: supplier.name, purchases: 0, payments: 0, boughtSacks: 0, purchaseCount: 0 });
+  }
+  for (const purchase of state.purchases) {
+    const supplier = purchase.supplier || DEFAULT_SUPPLIER;
+    if (!rows.has(supplier)) rows.set(supplier, { supplier, purchases: 0, payments: 0, boughtSacks: 0, purchaseCount: 0 });
+    const row = rows.get(supplier);
+    row.purchases += Number(purchase.total) || 0;
+    row.boughtSacks += Number(purchase.kg) || 0;
+    row.purchaseCount++;
+  }
+  for (const payment of state.payments) {
+    const supplier = payment.supplier || DEFAULT_SUPPLIER;
+    if (!rows.has(supplier)) rows.set(supplier, { supplier, purchases: 0, payments: 0, boughtSacks: 0, purchaseCount: 0 });
+    rows.get(supplier).payments += Number(payment.amount) || 0;
+  }
+  return [...rows.values()]
+    .map((row) => ({
+      ...row,
+      debt: Math.max(row.purchases - row.payments, 0),
+      credit: Math.max(row.payments - row.purchases, 0)
+    }))
+    .sort((a, b) => b.debt - a.debt || a.supplier.localeCompare(b.supplier));
 }
 
 function periodSales(start) {
-  const rows = state.sales.filter((sale) => isAfter(sale.date, start));
+  return periodSalesBetween(start, new Date(8640000000000000));
+}
+
+function periodSalesBetween(start, end) {
+  const rows = state.sales.filter((sale) => isInPeriod(sale.date, start, end));
   return {
     total: rows.reduce((sum, sale) => sum + sale.total, 0),
     kg: rows.reduce((sum, sale) => sum + sale.kg, 0),
     cost: rows.reduce((sum, sale) => sum + (sale.costPerKg || 0) * sale.kg, 0),
     count: rows.length
   };
+}
+
+function periodPurchasesBetween(start, end) {
+  const rows = state.purchases.filter((purchase) => isInPeriod(purchase.date, start, end));
+  return {
+    total: rows.reduce((sum, purchase) => sum + purchase.total, 0),
+    kg: rows.reduce((sum, purchase) => sum + purchase.kg, 0),
+    count: rows.length
+  };
+}
+
+function periodPaymentsBetween(start, end) {
+  const rows = state.payments.filter((payment) => isInPeriod(payment.date, start, end));
+  return {
+    total: rows.reduce((sum, payment) => sum + payment.amount, 0),
+    count: rows.length
+  };
+}
+
+function availableMonthKeys() {
+  const keys = new Set([monthKey(new Date())]);
+  for (const row of [...state.sales, ...state.purchases, ...state.payments]) keys.add(monthKey(row.date));
+  return [...keys].sort((a, b) => b.localeCompare(a));
 }
 
 function showToast(message) {
@@ -406,18 +505,16 @@ async function registerPurchase(event) {
 
 async function registerPayment(event) {
   event.preventDefault();
-  const purchaseId = $("#paymentPurchase").value;
-  const purchase = state.purchases.find((row) => row.id === purchaseId);
+  const supplier = $("#paymentPurchase").value || DEFAULT_SUPPLIER;
   const amount = Number($("#paymentAmount").value) || 0;
   if (amount <= 0) return showToast("Ingresa un monto");
-  const balance = purchase ? purchaseBalance(purchase) : amount;
   await put("payments", {
     id: uid("payment"),
-    purchaseId: purchase?.id || "",
+    purchaseId: "",
     date: inputDateToIso($("#paymentDate").value),
-    supplier: purchase?.supplier || DEFAULT_SUPPLIER,
-    varietyName: purchase?.varietyName || varietyName(purchase?.varietyId || DEFAULT_VARIETY_ID),
-    amount: Math.min(amount, balance),
+    supplier,
+    varietyName: varietyName(DEFAULT_VARIETY_ID),
+    amount,
     note: $("#paymentNote").value.trim()
   });
   $("#paymentAmount").value = "";
@@ -441,7 +538,10 @@ function render() {
   $("#suggestedPriceLabel").textContent = `${money(saleVarietyStats.suggestedPrice)}/saco`;
   $("#dailySales").textContent = money(periodSales(startOfDay(new Date())).total);
   $("#weeklySales").textContent = money(periodSales(startOfWeek(new Date())).total);
-  const month = periodSales(startOfMonth(new Date()));
+  const monthStart = startOfMonth(new Date());
+  const monthEnd = nextMonth(monthStart);
+  const month = periodSalesBetween(monthStart, monthEnd);
+  const monthPurchases = periodPurchasesBetween(monthStart, monthEnd);
   $("#monthlySales").textContent = money(month.total);
   $("#monthlyKg").textContent = sacks(month.kg);
   $("#monthlyAvgTicket").textContent = money(month.count ? month.total / month.count : 0);
@@ -449,8 +549,8 @@ function render() {
   $("#stockValue").textContent = money(current.stock * current.avgCost);
   $("#avgCost").textContent = `${money(current.avgCost)}/saco`;
   $("#suggestedPrice").textContent = `${money(current.suggestedPrice)}/saco`;
-  $("#monthlyProfit").textContent = money(month.total - month.cost);
-  $("#monthlyMargin").textContent = month.total ? `${Math.round(((month.total - month.cost) / month.total) * 100)}%` : "0%";
+  $("#monthlyProfit").textContent = money(month.total - monthPurchases.total);
+  $("#monthlyMargin").textContent = month.total ? `${Math.round(((month.total - monthPurchases.total) / month.total) * 100)}%` : "0%";
   $("#monthlyTicketCount").textContent = month.count;
   $("#supplierCredit").textContent = money(current.credit);
   renderPriceButtons();
@@ -461,6 +561,7 @@ function render() {
   renderRecentPayments();
   renderInventory();
   renderDashboardInventory();
+  renderMonthSelector();
   renderHistory();
   salePreview();
   purchasePreview();
@@ -526,23 +627,28 @@ function renderRecentSales() {
 }
 
 function renderOpenPurchases() {
-  const rows = state.purchases.filter((purchase) => purchaseBalance(purchase) > 0);
+  const balances = purchaseBalancesById();
+  const rows = state.purchases.filter((purchase) => (balances.get(purchase.id) || 0) > 0);
   $("#openPurchases").innerHTML = rows.length ? rows.map((purchase) => `
     <div class="list-item">
       <div class="item-main">
         <strong>${escapeHtml(purchase.supplier)} · ${escapeHtml(purchase.varietyName || varietyName(purchase.varietyId || DEFAULT_VARIETY_ID))}</strong>
         <span class="item-meta">${dateTime(purchase.date)} · ${sacks(purchase.kg)} · Total ${money(purchase.total)}</span>
       </div>
-      <span class="amount debt">${money(purchaseBalance(purchase))}</span>
+      <span class="amount debt">${money(balances.get(purchase.id) || 0)}</span>
     </div>
   `).join("") : `<div class="empty">No hay deuda pendiente.</div>`;
 }
 
 function renderPaymentOptions() {
-  const rows = state.purchases.filter((purchase) => purchaseBalance(purchase) > 0);
-  $("#paymentPurchase").innerHTML = rows.length ? rows.map((purchase) => `
-    <option value="${purchase.id}">${escapeHtml(purchase.supplier)} · ${escapeHtml(purchase.varietyName || varietyName(purchase.varietyId || DEFAULT_VARIETY_ID))} · debe ${money(purchaseBalance(purchase))}</option>
-  `).join("") : `<option value="">${DEFAULT_SUPPLIER} · saldo a favor</option>`;
+  const currentValue = $("#paymentPurchase").value;
+  const summaries = supplierSummaries();
+  const debtRows = summaries.filter((row) => row.debt > 0);
+  const rows = debtRows.length ? debtRows : summaries;
+  $("#paymentPurchase").innerHTML = rows.length ? rows.map((row) => `
+    <option value="${escapeHtml(row.supplier)}">${escapeHtml(row.supplier)} · ${row.debt > 0 ? `debe ${money(row.debt)}` : `saldo a favor ${money(row.credit)}`} · ${row.purchaseCount} compras</option>
+  `).join("") : `<option value="${DEFAULT_SUPPLIER}">${DEFAULT_SUPPLIER} · sin deuda</option>`;
+  if (rows.some((row) => row.supplier === currentValue)) $("#paymentPurchase").value = currentValue;
 }
 
 function renderRecentPayments() {
@@ -609,6 +715,11 @@ async function confirmDeleteWithPin(event) {
     await refresh();
     return showToast("Compra eliminada");
   }
+  if (type === "payments") {
+    await deleteById("payments", id);
+    await refresh();
+    return showToast("Pago eliminado");
+  }
 }
 
 function cancelDeleteWithPin() {
@@ -646,6 +757,32 @@ function renderDashboardInventory() {
   }).join("") : `<div class="empty">Sin variedades.</div>`;
 }
 
+function renderMonthSelector() {
+  const select = $("#dashboardMonthSelect");
+  const currentValue = select.value;
+  const keys = availableMonthKeys();
+  select.innerHTML = keys.map((key) => `<option value="${key}">${monthLabel(key)}</option>`).join("");
+  select.value = keys.includes(currentValue) ? currentValue : keys[0];
+  renderSelectedMonthDashboard();
+}
+
+function renderSelectedMonthDashboard() {
+  const key = $("#dashboardMonthSelect").value || monthKey(new Date());
+  const { start, end } = monthRange(key);
+  const sales = periodSalesBetween(start, end);
+  const purchases = periodPurchasesBetween(start, end);
+  const payments = periodPaymentsBetween(start, end);
+  const profit = sales.total - purchases.total;
+  $("#selectedMonthSales").textContent = money(sales.total);
+  $("#selectedMonthProfit").textContent = money(profit);
+  $("#selectedMonthProfit").classList.toggle("positive", profit >= 0);
+  $("#selectedMonthProfit").classList.toggle("debt", profit < 0);
+  $("#selectedMonthPurchases").textContent = money(purchases.total);
+  $("#selectedMonthBoughtSacks").textContent = sacks(purchases.kg);
+  $("#selectedMonthSoldSacks").textContent = sacks(sales.kg);
+  $("#selectedMonthPayments").textContent = money(payments.total);
+}
+
 function renderHistory() {
   const filter = $("#historyFilter").value;
   let rows = [];
@@ -674,7 +811,9 @@ function renderHistory() {
       title: `Pago a ${payment.supplier || DEFAULT_SUPPLIER}`,
       meta: `${dateTime(payment.date)}${payment.note ? ` · ${payment.note}` : ""}`,
       amount: money(payment.amount),
-      cls: "positive"
+      cls: "positive",
+      type: "payments",
+      id: payment.id
     }));
   }
   $("#historyList").innerHTML = rows.length ? rows.map((row) => `
@@ -990,6 +1129,7 @@ function bind() {
   $("#paymentForm").addEventListener("submit", registerPayment);
   $("#varietyForm").addEventListener("submit", registerVariety);
   $("#historyFilter").addEventListener("change", renderHistory);
+  $("#dashboardMonthSelect").addEventListener("change", renderSelectedMonthDashboard);
   $("#historyList").addEventListener("click", (event) => {
     const button = event.target.closest("[data-delete-type]");
     if (button) deleteRecord(button.dataset.deleteType, button.dataset.deleteId);
