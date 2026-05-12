@@ -1,4 +1,4 @@
-const CACHE_NAME = "papas-pos-v11";
+const CACHE_NAME = "papas-pos-v12";
 const FILES = [
   "./",
   "./index.html",
@@ -9,7 +9,7 @@ const FILES = [
   "./icon.svg"
 ];
 
-const TIME_FIX = `
+const APP_FIX = `
 (() => {
   const originalPut = window.put;
   window.inputDateToIso = function inputDateToIso(value) {
@@ -24,6 +24,29 @@ const TIME_FIX = `
     }
     return originalPut(storeName, value);
   };
+
+  if ("serviceWorker" in navigator) {
+    let reloading = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (reloading) return;
+      reloading = true;
+      window.location.reload();
+    });
+    navigator.serviceWorker.getRegistration().then((registration) => {
+      if (!registration) return;
+      const activateWaiting = () => {
+        if (registration.waiting) registration.waiting.postMessage({ type: "SKIP_WAITING" });
+      };
+      registration.addEventListener("updatefound", () => {
+        const worker = registration.installing;
+        if (!worker) return;
+        worker.addEventListener("statechange", () => {
+          if (worker.state === "installed" && navigator.serviceWorker.controller) activateWaiting();
+        });
+      });
+      registration.update().then(activateWaiting).catch(() => {});
+    });
+  }
 })();
 `;
 
@@ -40,6 +63,10 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
+});
+
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
@@ -48,7 +75,7 @@ self.addEventListener("fetch", (event) => {
       caches.match(event.request)
         .then((cached) => cached || fetch(event.request))
         .then((response) => response.text())
-        .then((text) => new Response(`${text}\n${TIME_FIX}`, {
+        .then((text) => new Response(`${text}\n${APP_FIX}`, {
           headers: { "Content-Type": "application/javascript; charset=utf-8" }
         }))
     );
