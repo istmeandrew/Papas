@@ -1,4 +1,4 @@
-const CACHE_NAME = "papas-pos-v9";
+const CACHE_NAME = "papas-pos-v10";
 const FILES = [
   "./",
   "./index.html",
