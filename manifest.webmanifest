@@ -4,8 +4,8 @@
   "description": "Punto de venta simple para compras, ventas, stock y pagos de papas.",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#f6f2e8",
-  "theme_color": "#224236",
+  "background_color": "#eef4ec",
+  "theme_color": "#367c2b",
   "orientation": "portrait",
   "icons": [
     {
