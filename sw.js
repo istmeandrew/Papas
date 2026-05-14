@@ -1,9 +1,10 @@
-const CACHE_NAME = "papas-pos-v12";
+const CACHE_NAME = "papas-pos-v22";
 const FILES = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
+  "./app-update.js",
   "./excel-seed.js",
   "./manifest.webmanifest",
   "./icon.svg"
